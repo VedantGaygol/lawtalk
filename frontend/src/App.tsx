@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { useAuth } from "@/hooks/use-auth";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { VideoCallQueueProvider } from "@/hooks/use-video-call-queue";
 
 // Public pages
 import LandingPage from "@/pages/landing";
@@ -159,12 +160,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <TooltipProvider>
-          <WouterRouter>
-            <Router />
-          </WouterRouter>
-          <Toaster />
-        </TooltipProvider>
+        <VideoCallQueueProvider>
+          <TooltipProvider>
+            <WouterRouter>
+              <Router />
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </VideoCallQueueProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

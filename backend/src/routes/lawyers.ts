@@ -1,13 +1,17 @@
 import { Router } from "express";
+import multer from "multer";
 import { db } from "../db/index";
 import { lawyersTable, usersTable, reviewsTable } from "../db/schema/index";
 import { eq, and, gte, like, desc, sql } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middlewares/auth";
+import { uploadBufferToCloudinary } from "../lib/cloudinary";
 import {
   GetLawyersQueryParams,
   UpdateLawyerProfileBody,
   UploadLicenseBody,
 } from "../generated/zod/index";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -179,7 +183,7 @@ router.put("/profile", requireAuth, requireRole("lawyer"), async (req, res) => {
   }
 });
 
-// POST /api/lawyers/upload-license
+// POST /api/lawyers/upload-license (legacy URL-based, kept for compatibility)
 router.post("/upload-license", requireAuth, requireRole("lawyer"), async (req, res) => {
   try {
     const body = UploadLicenseBody.parse(req.body);
@@ -196,6 +200,71 @@ router.post("/upload-license", requireAuth, requireRole("lawyer"), async (req, r
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+// POST /api/lawyers/upload-profile-image
+router.post(
+  "/upload-profile-image",
+  requireAuth,
+  requireRole("lawyer"),
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "No image file provided" });
+        return;
+      }
+      const userId = req.user!.userId;
+      const url = await uploadBufferToCloudinary(req.file.buffer, "lawtalk/profiles");
+
+      await db.update(usersTable).set({ profileImage: url, updatedAt: new Date() }).where(eq(usersTable.id, userId));
+
+      res.json({ success: true, url });
+    } catch (err) {
+      console.error("Upload profile image error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// POST /api/lawyers/upload-license-file
+router.post(
+  "/upload-license-file",
+  requireAuth,
+  requireRole("lawyer"),
+  upload.single("license"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "No file provided" });
+        return;
+      }
+      const userId = req.user!.userId;
+      let imageBuffer: Buffer;
+
+      if (req.file.mimetype === "application/pdf") {
+        // Convert first page of PDF to JPEG using pdf-to-img
+        const { pdf } = await import("pdf-to-img");
+        const pages = await pdf(req.file.buffer, { scale: 2 });
+        const firstPage = await pages.getPage(1);
+        imageBuffer = Buffer.from(firstPage);
+      } else {
+        imageBuffer = req.file.buffer;
+      }
+
+      const url = await uploadBufferToCloudinary(imageBuffer, "lawtalk/licenses");
+
+      await db
+        .update(lawyersTable)
+        .set({ licenseDocument: url, updatedAt: new Date() })
+        .where(eq(lawyersTable.userId, userId));
+
+      res.json({ success: true, url });
+    } catch (err) {
+      console.error("Upload license file error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
 
 // GET /api/lawyers/:lawyerId
 router.get("/:lawyerId", async (req, res) => {

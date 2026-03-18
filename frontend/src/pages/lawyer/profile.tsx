@@ -1,19 +1,51 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLocation } from "wouter";
 import {
   User, MapPin, Briefcase, DollarSign, FileText,
-  Link as LinkIcon, Save, ShieldCheck, AlertCircle, Copy, CheckCircle2, Video
+  Upload, Save, ShieldCheck, AlertCircle, Copy, CheckCircle2, Video, ImageIcon, ZoomIn, ZoomOut, RotateCw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { useAuth } from "@/hooks/use-auth";
-import { getLawyerProfile, updateLawyerProfile, uploadLicense } from "@/services/api";
+import { getLawyerProfile, updateLawyerProfile } from "@/services/api";
+import api from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+
+// ── Crop helpers ──────────────────────────────────────────────────────────────
+async function getCroppedBlob(imageSrc: string, pixelCrop: Area, rotation = 0): Promise<Blob> {
+  const image = await new Promise<HTMLImageElement>((res, rej) => {
+    const img = new Image();
+    img.addEventListener("load", () => res(img));
+    img.addEventListener("error", rej);
+    img.src = imageSrc;
+  });
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const rad = (rotation * Math.PI) / 180;
+  const sin = Math.abs(Math.sin(rad));
+  const cos = Math.abs(Math.cos(rad));
+  const bw = image.width * cos + image.height * sin;
+  const bh = image.width * sin + image.height * cos;
+  canvas.width = bw;
+  canvas.height = bh;
+  ctx.translate(bw / 2, bh / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(image, -image.width / 2, -image.height / 2);
+  const out = document.createElement("canvas");
+  out.width = pixelCrop.width;
+  out.height = pixelCrop.height;
+  out.getContext("2d")!.drawImage(canvas, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height);
+  return new Promise((res, rej) => out.toBlob(b => b ? res(b) : rej(new Error("Canvas empty")), "image/jpeg", 0.92));
+}
 
 const SPECIALIZATIONS = [
   "Criminal Law", "Family Law", "Civil Law", "Corporate Law",
@@ -27,7 +59,6 @@ const profileSchema = z.object({
   location: z.string().min(2, "Location is required"),
   pricing: z.coerce.number().min(1, "Pricing is required"),
   bio: z.string().optional(),
-  profileImage: z.string().url("Must be a valid URL").optional().or(z.literal("")),
 });
 
 type ProfileForm = z.infer<typeof profileSchema>;
@@ -39,9 +70,19 @@ const LawyerProfile = () => {
   const [profile, setProfile] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [licenseUrl, setLicenseUrl] = useState("");
   const [isUploadingLicense, setIsUploadingLicense] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [copied, setCopied] = useState(false);
+  const licenseInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Crop dialog state
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const onCropComplete = useCallback((_: Area, pixels: Area) => setCroppedAreaPixels(pixels), []);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
@@ -57,7 +98,6 @@ const LawyerProfile = () => {
           location: res.location || "",
           pricing: res.pricing || 0,
           bio: res.bio || "",
-          profileImage: res.profileImage || "",
         });
       })
       .catch(() => toast({ title: "Error loading profile", variant: "destructive" }))
@@ -77,22 +117,56 @@ const LawyerProfile = () => {
     }
   };
 
-  const handleLicenseUpload = async () => {
-    if (!licenseUrl.trim()) {
-      toast({ title: "Enter a license URL", variant: "destructive" });
-      return;
-    }
+  const handleLicenseUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     setIsUploadingLicense(true);
     try {
-      await uploadLicense(licenseUrl);
+      const formData = new FormData();
+      formData.append("license", file);
+      await api.post("/api/lawyers/upload-license-file", formData, { headers: { "Content-Type": "multipart/form-data" } });
       toast({ title: "License uploaded!", description: "Your license has been submitted for review." });
-      setLicenseUrl("");
       const updated = await getLawyerProfile();
       setProfile(updated);
     } catch (err: any) {
       toast({ title: "Error", description: err.response?.data?.message || err.message, variant: "destructive" });
     } finally {
       setIsUploadingLicense(false);
+      if (licenseInputRef.current) licenseInputRef.current.value = "";
+    }
+  };
+
+  // Step 1: file picked → open crop dialog
+  const handleImageFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCropSrc(reader.result as string);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setRotation(0);
+    };
+    reader.readAsDataURL(file);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  };
+
+  // Step 2: user confirms crop → upload to Cloudinary
+  const handleCropConfirm = async () => {
+    if (!cropSrc || !croppedAreaPixels) return;
+    setIsUploadingImage(true);
+    setCropSrc(null);
+    try {
+      const blob = await getCroppedBlob(cropSrc, croppedAreaPixels, rotation);
+      const formData = new FormData();
+      formData.append("image", blob, "profile.jpg");
+      const { data } = await api.post("/api/lawyers/upload-profile-image", formData, { headers: { "Content-Type": "multipart/form-data" } });
+      setProfile((prev: any) => ({ ...prev, profileImage: data.url }));
+      toast({ title: "Profile image updated!" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.response?.data?.message || err.message, variant: "destructive" });
+    } finally {
+      setIsUploadingImage(false);
     }
   };
 
@@ -169,6 +243,72 @@ const LawyerProfile = () => {
         </Card>
       )}
 
+      {/* Crop Dialog */}
+      <Dialog open={!!cropSrc} onOpenChange={open => { if (!open) setCropSrc(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Adjust Profile Photo</DialogTitle>
+          </DialogHeader>
+
+          <div className="relative w-full h-72 bg-black rounded-xl overflow-hidden">
+            {cropSrc && (
+              <Cropper
+                image={cropSrc}
+                crop={crop}
+                zoom={zoom}
+                rotation={rotation}
+                aspect={1}
+                cropShape="round"
+                showGrid={false}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={onCropComplete}
+              />
+            )}
+          </div>
+
+          <div className="space-y-4 pt-1">
+            <div className="flex items-center gap-3">
+              <ZoomOut size={16} className="text-muted-foreground shrink-0" />
+              <Slider min={1} max={3} step={0.05} value={[zoom]} onValueChange={([v]) => setZoom(v)} className="flex-1" />
+              <ZoomIn size={16} className="text-muted-foreground shrink-0" />
+            </div>
+            <div className="flex items-center gap-3">
+              <RotateCw size={16} className="text-muted-foreground shrink-0" />
+              <Slider min={0} max={360} step={1} value={[rotation]} onValueChange={([v]) => setRotation(v)} className="flex-1" />
+              <span className="text-xs text-muted-foreground w-8 text-right">{rotation}°</span>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCropSrc(null)}>Cancel</Button>
+            <Button onClick={handleCropConfirm} isLoading={isUploadingImage}>Apply & Upload</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Profile Image Upload */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><ImageIcon size={18} /> Profile Photo</CardTitle>
+        </CardHeader>
+        <CardContent className="flex items-center gap-5">
+          <div className="w-20 h-20 rounded-full bg-muted overflow-hidden shrink-0 border-2 border-border">
+            {profile?.profileImage
+              ? <img src={profile.profileImage} alt="Profile" className="w-full h-full object-cover" />
+              : <div className="w-full h-full flex items-center justify-center text-muted-foreground"><User size={32} /></div>
+            }
+          </div>
+          <div className="space-y-2">
+            <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageFilePicked} />
+            <Button variant="outline" size="sm" className="gap-2" isLoading={isUploadingImage} onClick={() => imageInputRef.current?.click()}>
+              <Upload size={15} /> {isUploadingImage ? "Uploading..." : "Upload Photo"}
+            </Button>
+            <p className="text-xs text-muted-foreground">JPG, PNG or WebP. Max 10MB.</p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* License Upload */}
       <Card className={profile?.licenseDocument ? "border-emerald-200 bg-emerald-50/30" : "border-amber-200 bg-amber-50/30"}>
         <CardHeader className="pb-3">
@@ -183,22 +323,15 @@ const LawyerProfile = () => {
         </CardHeader>
         <CardContent className="space-y-3">
           {profile?.licenseDocument && (
-            <p className="text-sm text-muted-foreground break-all">
-              Current: <a href={profile.licenseDocument} target="_blank" rel="noreferrer" className="text-primary underline">{profile.licenseDocument}</a>
-            </p>
+            <div className="rounded-xl overflow-hidden border border-border w-full max-w-xs">
+              <img src={profile.licenseDocument} alt="License" className="w-full object-contain" />
+            </div>
           )}
-          <div className="flex gap-2">
-            <Input
-              value={licenseUrl}
-              onChange={e => setLicenseUrl(e.target.value)}
-              placeholder="Paste license document URL (Google Drive, Dropbox, etc.)"
-              className="bg-white"
-            />
-            <Button onClick={handleLicenseUpload} isLoading={isUploadingLicense} className="shrink-0">
-              Upload
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">Upload a publicly accessible URL to your bar license document.</p>
+          <input ref={licenseInputRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handleLicenseUpload} />
+          <Button variant="outline" className="gap-2" isLoading={isUploadingLicense} onClick={() => licenseInputRef.current?.click()}>
+            <Upload size={15} /> {isUploadingLicense ? "Uploading..." : "Upload License (PDF or Image)"}
+          </Button>
+          <p className="text-xs text-muted-foreground">Upload a PDF or image of your bar license. PDFs are auto-converted to image.</p>
         </CardContent>
       </Card>
 
@@ -239,11 +372,6 @@ const LawyerProfile = () => {
                 <label className="text-sm font-semibold flex items-center gap-2"><DollarSign size={15} /> Hourly Rate (USD)</label>
                 <Input {...register("pricing")} type="number" min={1} placeholder="e.g. 150" error={errors.pricing?.message} />
               </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-semibold flex items-center gap-2"><LinkIcon size={15} /> Profile Image URL</label>
-              <Input {...register("profileImage")} placeholder="https://..." error={errors.profileImage?.message} />
             </div>
 
             <div className="space-y-1">

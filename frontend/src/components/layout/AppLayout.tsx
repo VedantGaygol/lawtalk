@@ -3,10 +3,11 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Home, Briefcase, Users, MessageSquare, User,
-  LogOut, Bell, Shield, LayoutDashboard, Gavel, FileText
+  LogOut, Bell, Shield, LayoutDashboard, Gavel, FileText, Video, CheckCircle2, XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getNotifications } from "@/services/api";
+import { useVideoCallQueue } from "@/hooks/use-video-call-queue";
 
 interface NavItem {
   label: string;
@@ -18,6 +19,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  const videoQueue = useVideoCallQueue();
 
   useEffect(() => {
     if (!user) return;
@@ -161,6 +163,65 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      {/* Video Call Request Popup — persists across all pages for lawyers */}
+      {user?.role === "lawyer" && videoQueue.videoRequests.length > 0 && (() => {
+        const req = videoQueue.videoRequests[0]!;
+        return (
+          <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[100] w-80 shadow-2xl">
+            <div className="bg-card border-2 border-amber-300 rounded-2xl overflow-hidden">
+              {/* Header */}
+              <div className="bg-amber-50 px-4 py-3 flex items-center gap-2 border-b border-amber-200">
+                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <Video size={15} className="text-amber-600" />
+                <span className="text-sm font-bold text-amber-800">Incoming Video Request</span>
+                {videoQueue.videoRequests.length > 1 && (
+                  <span className="ml-auto text-xs bg-amber-200 text-amber-800 font-bold px-2 py-0.5 rounded-full">
+                    +{videoQueue.videoRequests.length - 1} more
+                  </span>
+                )}
+              </div>
+              {/* Body */}
+              <div className="p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold shrink-0">
+                    {req.userName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">{req.userName}</p>
+                    <p className="text-xs text-muted-foreground">wants to join a video conference</p>
+                  </div>
+                </div>
+                <textarea
+                  rows={2}
+                  placeholder='Reply (e.g. "We will reschedule to 5pm today")'
+                  value={videoQueue.replyMessages[req.socketId] || ""}
+                  onChange={e =>
+                    videoQueue.setReplyMessages(prev => ({ ...prev, [req.socketId]: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-border px-3 py-2 text-xs bg-background focus:outline-none focus:border-primary resize-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => videoQueue.respond(req.socketId, false)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-destructive/40 text-destructive hover:bg-destructive hover:text-white text-xs font-semibold transition-colors"
+                  >
+                    <XCircle size={13} /> Decline
+                  </button>
+                  <Link href={`/video/${videoQueue.lawyerCode}`}>
+                    <button
+                      onClick={() => videoQueue.respond(req.socketId, true)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                    >
+                      <CheckCircle2 size={13} /> Accept & Join
+                    </button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Mobile Bottom Nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around items-center h-16 px-2 z-50">

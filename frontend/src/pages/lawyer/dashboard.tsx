@@ -1,5 +1,5 @@
-import { Link } from "wouter";
-import { Users, Briefcase, FileText, CheckCircle2, XCircle, Star } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Users, Briefcase, FileText, CheckCircle2, XCircle, Star, Video, Bell } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -8,12 +8,15 @@ import { getRequests, respondToRequest } from "@/services/api";
 import { Badge } from "@/components/ui/badge";
 import { formatTimeAgo } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useVideoCallQueue } from "@/hooks/use-video-call-queue";
 
 const LawyerDashboard = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [requestsData, setRequestsData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const { videoRequests, replyMessages, lawyerCode, setReplyMessages, respond } = useVideoCallQueue();
 
   const fetchRequests = () => {
     setIsLoading(true);
@@ -32,6 +35,11 @@ const LawyerDashboard = () => {
     } catch (error: any) {
       toast({ title: "Error", description: error.response?.data?.message || error.message, variant: "destructive" });
     }
+  };
+
+  const handleVideoRespond = (clientSocketId: string, accepted: boolean) => {
+    respond(clientSocketId, accepted);
+    if (accepted) setLocation(`/video/${lawyerCode}`);
   };
 
   const pendingRequests = requestsData?.requests.filter(r => r.status === 'pending') || [];
@@ -94,6 +102,55 @@ const LawyerDashboard = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Video Call Requests */}
+      {videoRequests.length > 0 && (
+        <div className="space-y-4">
+          <h3 className="text-xl font-bold font-display flex items-center gap-2">
+            <Video size={20} className="text-primary" /> Incoming Video Call Requests
+            <Badge variant="warning" className="ml-1">{videoRequests.length}</Badge>
+          </h3>
+          <div className="space-y-3">
+            {videoRequests.map((req) => (
+              <Card key={req.socketId} className="border-amber-200 bg-amber-50/30">
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm">
+                      {req.userName.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-sm">{req.userName} wants to join a video call</p>
+                    </div>
+                    <Bell size={16} className="text-amber-500 ml-auto animate-pulse" />
+                  </div>
+                  <textarea
+                    rows={2}
+                    placeholder='Optional reply (e.g. "We will reschedule to 5pm today")'
+                    value={replyMessages[req.socketId] || ""}
+                    onChange={e => setReplyMessages(prev => ({ ...prev, [req.socketId]: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-border px-3 py-2 text-sm bg-white focus:outline-none focus:border-primary resize-none"
+                  />
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      className="flex-1 border-destructive text-destructive hover:bg-destructive hover:text-white"
+                      onClick={() => handleVideoRespond(req.socketId, false)}
+                    >
+                      <XCircle size={15} className="mr-2" /> Decline
+                    </Button>
+                    <Button
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                      onClick={() => handleVideoRespond(req.socketId, true)}
+                    >
+                      <CheckCircle2 size={15} className="mr-2" /> Accept & Join
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-4">
         <h3 className="text-xl font-bold font-display">Recent Client Requests</h3>
