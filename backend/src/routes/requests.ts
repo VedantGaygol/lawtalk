@@ -109,7 +109,7 @@ router.get("/", requireAuth, async (req, res) => {
 // GET /api/requests/:requestId
 router.get("/:requestId", requireAuth, async (req, res) => {
   try {
-    const requestId = parseInt(req.params.requestId!);
+    const requestId = parseInt(req.params.requestId as string);
     const userId = req.user!.userId;
     const role = req.user!.role;
 
@@ -193,7 +193,7 @@ router.post("/", requireAuth, requireRole("user"), async (req, res) => {
 // PUT /api/requests/:requestId/respond
 router.put("/:requestId/respond", requireAuth, requireRole("lawyer"), async (req, res) => {
   try {
-    const requestId = parseInt(req.params.requestId!);
+    const requestId = parseInt(req.params.requestId as string);
     const body = RespondToRequestBody.parse(req.body);
     const userId = req.user!.userId;
 

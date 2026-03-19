@@ -1,3 +1,4 @@
+
 import express, { type Express } from "express";
 import cors from "cors";
 import { createServer } from "http";
@@ -6,7 +7,8 @@ import router from "./routes/index";
 
 const app: Express = express();
 const httpServer = createServer(app);
-
+type RTCSessionDescriptionInit = any;
+type RTCIceCandidateInit = any;
 // Socket.io for real-time chat
 export const io = new SocketIOServer(httpServer, {
   cors: {

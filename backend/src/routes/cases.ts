@@ -70,7 +70,7 @@ router.post("/", requireAuth, requireRole("user"), async (req, res) => {
 // GET /api/cases/:caseId
 router.get("/:caseId", requireAuth, async (req, res) => {
   try {
-    const caseId = parseInt(req.params.caseId!);
+    const caseId = parseInt(req.params.caseId as string);
     const [caseItem] = await db
       .select()
       .from(casesTable)
@@ -92,7 +92,7 @@ router.get("/:caseId", requireAuth, async (req, res) => {
 // GET /api/cases/:caseId/lawyer - Get assigned lawyer for a case
 router.get("/:caseId/lawyer", requireAuth, async (req, res) => {
   try {
-    const caseId = parseInt(req.params.caseId!);
+    const caseId = parseInt(req.params.caseId as string);
     const [caseItem] = await db
       .select()
       .from(casesTable)
@@ -139,7 +139,7 @@ router.get("/:caseId/lawyer", requireAuth, async (req, res) => {
 // GET /api/cases/:caseId/analysis - Dummy AI analysis
 router.get("/:caseId/analysis", requireAuth, async (req, res) => {
   try {
-    const caseId = parseInt(req.params.caseId!);
+    const caseId = parseInt(req.params.caseId as string);
     const [caseItem] = await db
       .select()
       .from(casesTable)

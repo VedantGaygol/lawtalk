@@ -99,11 +99,11 @@ router.get("/conversations", requireAuth, async (req, res) => {
 // GET /api/messages/:conversationId
 router.get("/:conversationId", requireAuth, async (req, res) => {
   try {
-    const { conversationId } = req.params;
+    const conversationId = req.params.conversationId as string;
     const userId = req.user!.userId;
 
     // Verify user is part of this conversation (exact segment match)
-    if (!conversationId!.split("_").includes(String(userId))) {
+    if (!conversationId.split("_").includes(String(userId))) {
       res.status(403).json({ error: "Not authorized for this conversation" });
       return;
     }
@@ -112,7 +112,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
       .select()
       .from(messagesTable)
       .innerJoin(usersTable, eq(messagesTable.senderId, usersTable.id))
-      .where(eq(messagesTable.conversationId, conversationId!))
+      .where(eq(messagesTable.conversationId, conversationId))
       .orderBy(messagesTable.createdAt);
 
     // Mark messages as read
@@ -121,7 +121,7 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
       .set({ isRead: true })
       .where(
         and(
-          eq(messagesTable.conversationId, conversationId!),
+          eq(messagesTable.conversationId, conversationId),
           eq(messagesTable.isRead, false),
         ),
       );
@@ -156,12 +156,12 @@ router.get("/:conversationId", requireAuth, async (req, res) => {
 // POST /api/messages/:conversationId
 router.post("/:conversationId", requireAuth, async (req, res) => {
   try {
-    const { conversationId } = req.params;
+    const conversationId = req.params.conversationId as string;
     const userId = req.user!.userId;
     const body = SendMessageBody.parse(req.body);
 
     // Verify user is part of this conversation (exact segment match)
-    if (!conversationId!.split("_").includes(String(userId))) {
+    if (!conversationId.split("_").includes(String(userId))) {
       res.status(403).json({ error: "Not authorized for this conversation" });
       return;
     }
@@ -169,7 +169,7 @@ router.post("/:conversationId", requireAuth, async (req, res) => {
     const [message] = await db
       .insert(messagesTable)
       .values({
-        conversationId: conversationId!,
+        conversationId: conversationId,
         senderId: userId,
         content: body.content,
         messageType: (body.messageType || "text") as "text" | "system" | "file",

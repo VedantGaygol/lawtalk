@@ -40,7 +40,7 @@ router.get("/", requireAuth, async (req, res) => {
 // PUT /api/notifications/:notificationId/read
 router.put("/:notificationId/read", requireAuth, async (req, res) => {
   try {
-    const notificationId = parseInt(req.params.notificationId!);
+    const notificationId = parseInt(req.params.notificationId as string);
     const userId = req.user!.userId;
 
     await db

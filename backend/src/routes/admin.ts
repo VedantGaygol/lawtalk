@@ -56,7 +56,7 @@ router.put(
   requireRole("admin"),
   async (req, res) => {
     try {
-      const lawyerId = parseInt(req.params.lawyerId!);
+      const lawyerId = parseInt(req.params.lawyerId as string);
       const body = AdminApproveLawyerBody.parse(req.body);
 
       await db
