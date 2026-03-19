@@ -38,7 +38,7 @@ export function VideoCallQueueProvider({ children }: { children: React.ReactNode
       // Only create socket once
       if (socketRef.current?.connected) return;
 
-      const socket = io("http://localhost:5000", {
+      const socket = io(import.meta.env.VITE_API_URL, {
         auth: { token: localStorage.getItem("lawtalk_token") },
         transports: ["websocket", "polling"],
       });

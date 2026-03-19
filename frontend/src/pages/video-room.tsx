@@ -113,7 +113,7 @@ const VideoConference = () => {
   // ── Connect socket (shared for both lawyer and client) ────────────────────
   const connectSocket = useCallback(() => {
     if (socketRef.current?.connected) return socketRef.current;
-    const socket = io("http://localhost:5000", {
+    const socket = io(import.meta.env.VITE_API_URL, {
       auth: { token: localStorage.getItem("lawtalk_token") },
       transports: ["websocket", "polling"],
     });
