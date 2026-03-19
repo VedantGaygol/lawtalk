@@ -9,6 +9,7 @@ import {
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { requireAuth } from "../middlewares/auth";
 import { SendMessageBody } from "../generated/zod/index";
+import { io } from "../app";
 
 const router = Router();
 
@@ -166,6 +167,34 @@ router.post("/:conversationId", requireAuth, async (req, res) => {
       return;
     }
 
+    // ── Security Bot: block personal info ──────────────────────────────────
+    const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+    // Strict Indian mobile: exactly 10 digits starting with 7, 8, or 9
+    // Also catches +91 prefixed variants
+    const phoneRegex = /(?:\+?91[\s\-]?)?[789]\d{9}(?!\d)/;
+    if (emailRegex.test(body.content) || phoneRegex.test(body.content)) {
+      // Save a system warning message visible to both parties
+      const [warning] = await db
+        .insert(messagesTable)
+        .values({
+          conversationId,
+          senderId: userId,
+          content: "⚠️ You are not able to share your personal details",
+          messageType: "system",
+          isRead: false,
+        })
+        .returning();
+      // Broadcast warning to both participants via socket
+      io.to(conversationId).emit("receive_message", {
+        ...warning,
+        senderId: userId,
+        messageType: "system",
+      });
+      res.status(451).json({ blocked: true, warning });
+      return;
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     const [message] = await db
       .insert(messagesTable)
       .values({
@@ -183,7 +212,7 @@ router.post("/:conversationId", requireAuth, async (req, res) => {
       .where(eq(usersTable.id, userId))
       .limit(1);
 
-    res.status(201).json({
+    const payload = {
       ...message,
       sender: sender
         ? {
@@ -197,7 +226,12 @@ router.post("/:conversationId", requireAuth, async (req, res) => {
             createdAt: sender.createdAt,
           }
         : null,
-    });
+    };
+
+    // Broadcast to ALL participants in the conversation room (including sender's other tabs)
+    io.to(conversationId).emit("receive_message", { ...payload, senderId: userId });
+
+    res.status(201).json(payload);
   } catch (err) {
     console.error("Send message error:", err);
     res.status(500).json({ error: "Internal server error" });

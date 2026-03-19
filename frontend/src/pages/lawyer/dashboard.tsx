@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatTimeAgo } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useVideoCallQueue } from "@/hooks/use-video-call-queue";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const LawyerDashboard = () => {
   const { user } = useAuth();
@@ -26,6 +27,8 @@ const LawyerDashboard = () => {
   };
 
   useEffect(() => { fetchRequests(); }, []);
+  useRealtimeEvent("new_request", fetchRequests);
+  useRealtimeEvent("approval_updated", () => window.location.reload());
 
   const handleResponse = async (requestId: number, status: 'accepted' | 'rejected') => {
     try {

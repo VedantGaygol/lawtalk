@@ -10,6 +10,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middlewares/auth";
 import { CreateRequestBody, RespondToRequestBody } from "../generated/zod/index";
+import { io } from "../app";
 
 const router = Router();
 
@@ -184,6 +185,10 @@ router.post("/", requireAuth, requireRole("user"), async (req, res) => {
     }
 
     res.status(201).json({ ...request, case: caseItem });
+
+    // Notify lawyer in real-time
+    io.emit(`user_${lawyer.userId}_new_request`, {});
+    io.emit(`user_${lawyer.userId}_new_notification`, {});
   } catch (err) {
     console.error("Create request error:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -241,6 +246,10 @@ router.put("/:requestId/respond", requireAuth, requireRole("lawyer"), async (req
     }
 
     res.json({ ...updated });
+
+    // Notify the client in real-time
+    io.emit(`user_${request.userId}_request_updated`, {});
+    io.emit(`user_${request.userId}_new_notification`, {});
   } catch (err) {
     console.error("Respond to request error:", err);
     res.status(500).json({ error: "Internal server error" });

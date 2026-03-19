@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { getRequests, respondToRequest } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { formatTimeAgo, formatCurrency } from "@/lib/utils";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const statusVariant: Record<string, any> = {
   pending: "warning",
@@ -32,6 +33,7 @@ const LawyerRequests = () => {
   };
 
   useEffect(() => { fetchRequests(); }, []);
+  useRealtimeEvent("new_request", fetchRequests);
 
   const handleRespond = async (requestId: number, status: "accepted" | "rejected") => {
     setProcessingId(requestId);

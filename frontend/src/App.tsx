@@ -6,6 +6,7 @@ import { AuthProvider } from "@/hooks/use-auth";
 import { useAuth } from "@/hooks/use-auth";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { VideoCallQueueProvider } from "@/hooks/use-video-call-queue";
+import { useRealtimeSetup } from "@/hooks/use-realtime";
 
 // Public pages
 import LandingPage from "@/pages/landing";
@@ -62,6 +63,7 @@ function NotFound() {
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
+  useRealtimeSetup();
 
   if (isLoading) {
     return (

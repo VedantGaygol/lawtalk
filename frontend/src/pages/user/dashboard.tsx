@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { getCases, getLawyers } from "@/services/api";
 import { formatTimeAgo } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const UserDashboard = () => {
   const { user } = useAuth();
@@ -15,14 +16,19 @@ const UserDashboard = () => {
   const [lawyersData, setLawyersData] = useState<any>(null);
   const [loadingLawyers, setLoadingLawyers] = useState(true);
 
-  useEffect(() => {
+  const fetchCases = () => {
     getCases()
       .then((res) => setCasesData(res))
       .finally(() => setLoadingCases(false));
+  };
+
+  useEffect(() => {
+    fetchCases();
     getLawyers({ limit: 3, minRating: 4.5 })
       .then((res) => setLawyersData(res))
       .finally(() => setLoadingLawyers(false));
   }, []);
+  useRealtimeEvent("request_updated", fetchCases);
 
   const activeCases = casesData?.cases.filter(c => c.status !== 'closed') || [];
 

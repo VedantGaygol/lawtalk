@@ -13,28 +13,54 @@ export function useSocket(conversationId?: string) {
   const onlineCallbackRef = useRef<((data: { userId: number; isOnline: boolean }) => void) | null>(null);
   const readCallbackRef = useRef<((data: { conversationId: string; readerId: number }) => void) | null>(null);
 
+  // Stable refs so callbacks inside socket handlers never go stale
+  const userIdRef = useRef(user?.id);
+  const conversationIdRef = useRef(conversationId);
+  useEffect(() => { userIdRef.current = user?.id; }, [user?.id]);
+  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
+
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
+
+    // Reuse existing connected socket if conversationId is the only thing that changed
+    if (socketRef.current?.connected) {
+      // Re-join the new conversation room
+      if (conversationId) {
+        socketRef.current.emit("join_conversation", conversationId);
+        const parts = conversationId.split("_");
+        const otherId = parts.find((p) => p !== String(user.id));
+        if (otherId) socketRef.current.emit("check_online", Number(otherId));
+      }
+      return;
+    }
 
     const socket = io(SOCKET_URL, {
       path: "/socket.io",
       auth: { token: localStorage.getItem("lawtalk_token") },
       autoConnect: true,
       transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
     });
 
     socketRef.current = socket;
 
     socket.on("connect", () => {
       setIsConnected(true);
-      // Register presence
-      socket.emit("user_online", user.id);
-      if (conversationId) {
-        socket.emit("join_conversation", conversationId);
-        // Ask if the other participant is online
-        const parts = conversationId.split("_");
-        const otherId = parts.find((p) => p !== String(user.id));
+      socket.emit("user_online", userIdRef.current);
+      if (conversationIdRef.current) {
+        socket.emit("join_conversation", conversationIdRef.current);
+        const parts = conversationIdRef.current.split("_");
+        const otherId = parts.find((p) => p !== String(userIdRef.current));
         if (otherId) socket.emit("check_online", Number(otherId));
+      }
+    });
+
+    socket.on("reconnect", () => {
+      socket.emit("user_online", userIdRef.current);
+      if (conversationIdRef.current) {
+        socket.emit("join_conversation", conversationIdRef.current);
       }
     });
 
@@ -57,42 +83,39 @@ export function useSocket(conversationId?: string) {
     });
 
     return () => {
-      if (conversationId && socket.connected) {
-        socket.emit("leave_conversation", conversationId);
+      if (conversationIdRef.current && socket.connected) {
+        socket.emit("leave_conversation", conversationIdRef.current);
       }
       socket.disconnect();
+      socketRef.current = null;
     };
-  }, [user, conversationId]);
+  }, [user?.id]); // Only reconnect when the logged-in user changes
 
-  const sendMessage = useCallback((content: string, type: "text" | "file" = "text") => {
-    if (socketRef.current?.connected && conversationId) {
-      socketRef.current.emit("send_message", {
-        conversationId,
-        content,
-        messageType: type,
-        senderId: user?.id,
-        senderName: user?.name,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }, [conversationId, user]);
+  // When conversationId changes, join the new room on the existing socket
+  useEffect(() => {
+    if (!socketRef.current?.connected || !conversationId) return;
+    socketRef.current.emit("join_conversation", conversationId);
+    const parts = conversationId.split("_");
+    const otherId = parts.find((p) => p !== String(user?.id));
+    if (otherId) socketRef.current.emit("check_online", Number(otherId));
+  }, [conversationId]);
 
   const sendTyping = useCallback((isTyping: boolean) => {
-    if (socketRef.current?.connected && conversationId && user) {
-      socketRef.current.emit("typing", { conversationId, userId: user.id, isTyping });
+    if (socketRef.current?.connected && conversationIdRef.current && userIdRef.current) {
+      socketRef.current.emit("typing", { conversationId: conversationIdRef.current, userId: userIdRef.current, isTyping });
     }
-  }, [conversationId, user]);
+  }, []);
 
   const emitMessagesRead = useCallback(() => {
-    if (socketRef.current?.connected && conversationId && user) {
-      socketRef.current.emit("messages_read", { conversationId, readerId: user.id });
+    if (socketRef.current?.connected && conversationIdRef.current && userIdRef.current) {
+      socketRef.current.emit("messages_read", { conversationId: conversationIdRef.current, readerId: userIdRef.current });
     }
-  }, [conversationId, user]);
+  }, []);
 
   const onMessage = useCallback((cb: (msg: any) => void) => { messageCallbackRef.current = cb; }, []);
   const onTyping = useCallback((cb: (data: { userId: number; isTyping: boolean }) => void) => { typingCallbackRef.current = cb; }, []);
   const onOnlineStatus = useCallback((cb: (data: { userId: number; isOnline: boolean }) => void) => { onlineCallbackRef.current = cb; }, []);
   const onMessagesRead = useCallback((cb: (data: { conversationId: string; readerId: number }) => void) => { readCallbackRef.current = cb; }, []);
 
-  return { isConnected, sendMessage, sendTyping, emitMessagesRead, onMessage, onTyping, onOnlineStatus, onMessagesRead, socket: socketRef.current };
+  return { isConnected, sendTyping, emitMessagesRead, onMessage, onTyping, onOnlineStatus, onMessagesRead };
 }

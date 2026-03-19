@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getNotifications, markNotificationRead } from "@/services/api";
 import { formatTimeAgo } from "@/lib/utils";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const iconMap: Record<string, any> = {
   approval: ShieldCheck,
@@ -23,6 +24,7 @@ const NotificationsPage = () => {
   };
 
   useEffect(() => { fetchNotifications(); }, []);
+  useRealtimeEvent("new_notification", fetchNotifications);
 
   const handleMarkRead = async (id: number) => {
     await markNotificationRead(id);

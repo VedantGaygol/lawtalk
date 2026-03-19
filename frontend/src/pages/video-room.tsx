@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/hooks/use-auth";
+import { useVideoCallQueue } from "@/hooks/use-video-call-queue";
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff,
   Copy, CheckCircle2, Shield, Users, Clock, Bell, XCircle,
@@ -29,6 +30,7 @@ const VideoConference = () => {
   const { roomCode: paramCode } = useParams();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
+  const { getSocket: getQueueSocket } = useVideoCallQueue();
 
   const [roomCode, setRoomCode] = useState(paramCode || "");
   const [joined, setJoined] = useState(false);
@@ -73,12 +75,24 @@ const VideoConference = () => {
       if (!isWaiterRef.current) {
         socketRef.current.emit("webrtc_leave", roomCode);
       }
-      socketRef.current.disconnect();
+      // For lawyers, socketRef points to the shared queue socket — never disconnect it.
+      // For clients, it's a dedicated socket — disconnect and clean up.
+      if (user?.role !== "lawyer") {
+        socketRef.current.removeAllListeners();
+        socketRef.current.disconnect();
+      } else {
+        // Remove only WebRTC listeners so the queue socket stays clean for next call
+        socketRef.current.off("webrtc_peer_joined");
+        socketRef.current.off("webrtc_offer");
+        socketRef.current.off("webrtc_answer");
+        socketRef.current.off("webrtc_ice");
+        socketRef.current.off("webrtc_peer_left");
+      }
     }
     localStreamRef.current = null;
     pcRef.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
-  }, [roomCode]);
+  }, [roomCode, user?.role]);
 
   // ── Build PeerConnection ──────────────────────────────────────────────────
   const createPC = useCallback((socket: Socket) => {
@@ -134,27 +148,26 @@ const VideoConference = () => {
       return;
     }
     localStreamRef.current = stream;
-    if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-    const socket = connectSocket();
+    // Reuse the persistent queue provider socket — it's already registered
+    // with video_lawyer_register on the server, so no new socket needed.
+    const socket = getQueueSocket();
+    if (!socket) {
+      setError("Connection not ready. Please wait a moment and try again.");
+      return;
+    }
+    socketRef.current = socket;
 
-    socket.on("connect", () => {
-      // Register as the owner of this room
-      socket.emit("video_lawyer_register", roomCode);
-      // Join the WebRTC room directly
-      socket.emit("webrtc_join", { roomCode, userId: user?.id ?? 0, userName: user?.name ?? "" });
-    });
+    // Re-register in case the previous session cleared it
+    socket.emit("video_lawyer_register", roomCode);
+    socket.emit("webrtc_join", { roomCode, userId: user?.id ?? 0, userName: user?.name ?? "" });
 
-    // Incoming client request
-    socket.on("video_call_request", (req: {
-      socketId: string; userId: number; userName: string; isBusy: boolean; queuePosition: number;
-    }) => {
-      setIncomingRequests(prev => {
-        if (prev.some(r => r.socketId === req.socketId)) return prev;
-        return [...prev, req];
-      });
-      setWaitingCount(req.queuePosition);
-    });
+    // Remove any stale WebRTC listeners before adding fresh ones
+    socket.off("webrtc_peer_joined");
+    socket.off("webrtc_offer");
+    socket.off("webrtc_answer");
+    socket.off("webrtc_ice");
+    socket.off("webrtc_peer_left");
 
     socket.on("webrtc_peer_joined", async () => {
       const pc = createPC(socket);
@@ -187,7 +200,7 @@ const VideoConference = () => {
     });
 
     setJoined(true);
-  }, [roomCode, user, connectSocket, createPC]);
+  }, [roomCode, user, getQueueSocket, createPC]);
 
   // ── CLIENT: send join request ─────────────────────────────────────────────
   const clientSendRequest = useCallback(() => {
@@ -195,20 +208,24 @@ const VideoConference = () => {
     setError("");
     isWaiterRef.current = true;
 
-    const socket = connectSocket();
+    // Always disconnect stale socket so we get a fresh connection + clean listeners
+    if (socketRef.current) {
+      socketRef.current.removeAllListeners();
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
+    const socket = io(import.meta.env.VITE_API_URL, {
+      auth: { token: localStorage.getItem("lawtalk_token") },
+      transports: ["websocket", "polling"],
+    });
+    socketRef.current = socket;
 
     socket.on("connect", () => {
       socket.emit("video_call_request", {
         roomCode, userId: user?.id ?? 0, userName: user?.name ?? "Client",
       });
     });
-
-    // Already connected — emit immediately
-    if (socket.connected) {
-      socket.emit("video_call_request", {
-        roomCode, userId: user?.id ?? 0, userName: user?.name ?? "Client",
-      });
-    }
 
     socket.on("video_call_queued", ({ position }: { position: number }) => {
       setClientPhase("requesting");
@@ -229,7 +246,6 @@ const VideoConference = () => {
         return;
       }
       localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
       socket.emit("webrtc_join", { roomCode, userId: user?.id ?? 0, userName: user?.name ?? "" });
 
@@ -270,6 +286,10 @@ const VideoConference = () => {
         pcRef.current?.close();
         pcRef.current = null;
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        // Disconnect socket so next request starts fresh
+        socket.removeAllListeners();
+        socket.disconnect();
+        socketRef.current = null;
         setJoined(false);
         setClientPhase("call_ended");
       });
@@ -301,6 +321,13 @@ const VideoConference = () => {
     setIncomingRequests(prev => prev.filter(r => r.socketId !== clientSocketId));
     setReplyMessages(prev => { const n = { ...prev }; delete n[clientSocketId]; return n; });
   };
+
+  // ── Assign local stream to video element once in-call screen mounts ────
+  useEffect(() => {
+    if (joined && localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+  }, [joined]);
 
   // ── Auto-join if roomCode in URL ──────────────────────────────────────────
   useEffect(() => {

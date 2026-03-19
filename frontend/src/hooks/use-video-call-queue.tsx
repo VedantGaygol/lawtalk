@@ -15,6 +15,7 @@ interface VideoCallQueueContextType {
   lawyerCode: string;
   setReplyMessages: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   respond: (clientSocketId: string, accepted: boolean) => void;
+  getSocket: () => Socket | null;
 }
 
 const VideoCallQueueContext = createContext<VideoCallQueueContextType | null>(null);
@@ -80,7 +81,7 @@ export function VideoCallQueueProvider({ children }: { children: React.ReactNode
 
   return (
     <VideoCallQueueContext.Provider
-      value={{ videoRequests, replyMessages, lawyerCode, setReplyMessages, respond }}
+      value={{ videoRequests, replyMessages, lawyerCode, setReplyMessages, respond, getSocket: () => socketRef.current }}
     >
       {children}
     </VideoCallQueueContext.Provider>

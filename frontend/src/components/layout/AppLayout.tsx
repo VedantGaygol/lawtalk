@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getNotifications } from "@/services/api";
 import { useVideoCallQueue } from "@/hooks/use-video-call-queue";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 interface NavItem {
   label: string;
@@ -27,6 +28,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       .then((res) => setUnreadCount(res?.unreadCount || 0))
       .catch(() => {});
   }, [user, location]);
+  useRealtimeEvent("new_notification", () => {
+    getNotifications().then((res) => setUnreadCount(res?.unreadCount || 0)).catch(() => {});
+  });
 
   let navItems: NavItem[] = [];
 
@@ -140,6 +144,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full border-2 border-background" />
               )}
             </Link>
+            <button
+              onClick={logout}
+              className="md:hidden p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded-full transition-colors"
+              title="Sign Out"
+            >
+              <LogOut size={20} />
+            </button>
             <div className="flex items-center gap-3 pl-3 border-l border-border">
               <div className="w-9 h-9 rounded-full bg-secondary overflow-hidden border border-border shrink-0">
                 {user?.profileImage ? (

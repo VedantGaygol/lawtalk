@@ -29,6 +29,8 @@ const onlineUsers = new Map<number, string>();
 const waitingQueues = new Map<string, { socketId: string; userId: number; userName: string }[]>();
 // Track lawyer socket per roomCode
 const lawyerSockets = new Map<string, string>();
+// Track active calls: roomCode -> true when lawyer is in a live call
+const activeCalls = new Set<string>();
 // One-time tokens: socketIds allowed to do webrtc_join after lawyer accepted
 const allowedClients = new Set<string>();
 
@@ -52,19 +54,10 @@ io.on("connection", (socket) => {
     socket.leave(conversationId);
   });
 
-  // Send a message to a conversation
-  socket.on("send_message", (data: {
-    conversationId: string;
-    senderId: number;
-    senderName: string;
-    senderRole: string;
-    senderImage?: string;
-    content: string;
-    messageType?: string;
-    createdAt: string;
-  }) => {
-    socket.to(data.conversationId).emit("receive_message", data);
-  });
+  // Send a message to a conversation — REMOVED: messages are now broadcast
+  // from the HTTP route via io.to(conversationId) to avoid dual-delivery.
+  // This handler is kept only for legacy compatibility but does nothing.
+  socket.on("send_message", () => {});
 
   // Typing indicator
   socket.on("typing", (data: { conversationId: string; userId: number; isTyping: boolean }) => {
@@ -89,11 +82,8 @@ io.on("connection", (socket) => {
   socket.on("video_call_request", (data: { roomCode: string; userId: number; userName: string }) => {
     const { roomCode, userId, userName } = data;
 
-    // Check if lawyer is currently in a call
-    const room = `video_${roomCode}`;
-    const roomSockets = io.sockets.adapter.rooms.get(room);
-    const occupants = roomSockets ? roomSockets.size : 0;
-    const isBusy = occupants >= 2;
+    // Check if lawyer is currently in an active call
+    const isBusy = activeCalls.has(roomCode);
 
     if (isBusy) {
       // Auto-decline immediately — lawyer is in a meeting
@@ -170,6 +160,12 @@ io.on("connection", (socket) => {
     allowedClients.delete(socket.id); // consume the token
     socket.join(room);
     socket.to(room).emit("webrtc_peer_joined", { socketId: socket.id });
+
+    // Mark call as active when a client joins (2 participants)
+    const roomSockets = io.sockets.adapter.rooms.get(room);
+    if (roomSockets && roomSockets.size >= 2) {
+      activeCalls.add(roomCode);
+    }
   });
 
   socket.on("webrtc_leave", (roomCode: string) => {
@@ -178,9 +174,11 @@ io.on("connection", (socket) => {
     socket.to(room).emit("webrtc_peer_left", { socketId: socket.id });
 
     // If lawyer left — force-end the call for the client still in room,
-    // then notify all queued waiters that the lawyer is free
+    // then notify all queued waiters that the lawyer is free.
+    // Do NOT delete lawyerSockets — the lawyer's persistent socket stays registered
+    // so the next client request can still be forwarded.
     if (lawyerSockets.get(roomCode) === socket.id) {
-      lawyerSockets.delete(roomCode);
+      activeCalls.delete(roomCode);
       // Tell the remaining client in the room the session ended
       io.to(room).emit("video_session_ended", { roomCode });
       // Tell all queued waiters the lawyer is now free
@@ -189,6 +187,8 @@ io.on("connection", (socket) => {
         io.to(waiter.socketId).emit("video_lawyer_free", { roomCode });
       }
       waitingQueues.delete(roomCode);
+      // Re-register so the lawyer can receive the next request immediately
+      lawyerSockets.set(roomCode, socket.id);
     }
   });
 
@@ -223,7 +223,10 @@ io.on("connection", (socket) => {
     }
     // Clean up lawyer socket registration
     for (const [roomCode, sid] of lawyerSockets.entries()) {
-      if (sid === socket.id) lawyerSockets.delete(roomCode);
+      if (sid === socket.id) {
+        lawyerSockets.delete(roomCode);
+        activeCalls.delete(roomCode);
+      }
     }
     // Clean up allowed token
     allowedClients.delete(socket.id);

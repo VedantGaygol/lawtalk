@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { formatTimeAgo } from "@/lib/utils";
 import { MessageSquare, Search, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const ChatList = () => {
   const { user } = useAuth();
@@ -14,17 +15,19 @@ const ChatList = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
+  const fetchData = () => {
     Promise.all([
       getConversations().catch(() => ({ conversations: [] })),
       getRequests().catch(() => ({ requests: [] })),
     ]).then(([convData, reqData]) => {
       setData(convData);
-      // Accepted requests = potential conversations not yet started
       const accepted = (reqData.requests || []).filter((r: any) => r.status === "accepted");
       setAcceptedRequests(accepted);
     }).finally(() => setIsLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { fetchData(); }, []);
+  useRealtimeEvent("request_updated", fetchData);
 
   const conversations = (data?.conversations || []).filter((c: any) =>
     search ? c.participantName?.toLowerCase().includes(search.toLowerCase()) : true

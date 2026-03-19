@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useSocket } from "@/hooks/use-socket";
 import { getMessages, sendMessage as httpSendMessage } from "@/services/api";
 import { format } from "date-fns";
-import { ArrowLeft, Send, Shield, Check, CheckCheck } from "lucide-react";
+import { ArrowLeft, Send, Shield, Check, CheckCheck, Bot } from "lucide-react";
 
 const ChatRoom = () => {
   const { conversationId } = useParams();
@@ -15,13 +15,12 @@ const ChatRoom = () => {
   const [participant, setParticipant] = useState<any>(null);
   const [isParticipantOnline, setIsParticipantOnline] = useState(false);
   const [isParticipantTyping, setIsParticipantTyping] = useState(false);
-  const [allRead, setAllRead] = useState(false); // did other party read our msgs
+  const [allRead, setAllRead] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const participantIdRef = useRef<number | null>(null);
 
   const {
-    sendMessage: socketSend,
     sendTyping,
     emitMessagesRead,
     onMessage,
@@ -31,7 +30,15 @@ const ChatRoom = () => {
     isConnected,
   } = useSocket(conversationId);
 
-  // Load history — wait for user to be available
+  // Derive participant ID directly from conversationId — no need to wait for messages
+  useEffect(() => {
+    if (!conversationId || !user?.id) return;
+    const parts = conversationId.split("_");
+    const otherId = parts.find((p) => p !== String(user.id));
+    if (otherId) participantIdRef.current = Number(otherId);
+  }, [conversationId, user?.id]);
+
+  // Load history
   useEffect(() => {
     if (!conversationId || !user?.id) return;
     setIsLoading(true);
@@ -45,36 +52,56 @@ const ChatRoom = () => {
               senderId: Number(m.sender?.id ?? m.senderId),
             }))
           );
-          // Check if all our sent messages are read
           const ourMsgs = res.messages.filter((m: any) => Number(m.sender?.id ?? m.senderId) === user.id);
-          if (ourMsgs.length > 0 && ourMsgs.every((m: any) => m.isRead)) {
-            setAllRead(true);
-          }
+          if (ourMsgs.length > 0 && ourMsgs.every((m: any) => m.isRead)) setAllRead(true);
         }
+        // Set participant info from history if available
         const other = res?.messages?.find(
           (m: any) => Number(m.sender?.id ?? m.senderId) !== user.id
         );
-        if (other?.sender) {
-          setParticipant(other.sender);
-          participantIdRef.current = Number(other.sender.id);
-        }
-        // Emit read receipt after loading
+        if (other?.sender) setParticipant(other.sender);
         emitMessagesRead();
       })
       .finally(() => setIsLoading(false));
   }, [conversationId, user?.id]);
 
-  // Socket handlers
+  // Incoming messages via socket
   useEffect(() => {
     onMessage((newMsg: any) => {
       const incomingSenderId = Number(newMsg.senderId);
-      if (incomingSenderId === user?.id) return;
+
       setMessages((prev) => {
+        // For system messages: always append if not already present
+        if (newMsg.messageType === "system") {
+          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          return [...prev, { ...newMsg, senderId: incomingSenderId }];
+        }
+
+        // For own messages: replace the pending temp message by matching content+time proximity
+        // OR skip if already confirmed via HTTP response
+        if (incomingSenderId === user?.id) {
+          // Replace pending temp msg that matches this content
+          const tempIdx = prev.findIndex(
+            (m) => m._pending && m.content === newMsg.content && m.senderId === user.id
+          );
+          if (tempIdx !== -1) {
+            const updated = [...prev];
+            updated[tempIdx] = { ...newMsg, senderId: incomingSenderId, _pending: false };
+            return updated;
+          }
+          // Already confirmed by HTTP — skip duplicate
+          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          return prev;
+        }
+
+        // Other person's message — dedup by id
         if (prev.some((m) => m.id === newMsg.id)) return prev;
         return [...prev, { ...newMsg, senderId: incomingSenderId }];
       });
-      // Immediately emit read since we're in the chat
-      emitMessagesRead();
+
+      if (newMsg.messageType !== "system" && incomingSenderId !== user?.id) {
+        emitMessagesRead();
+      }
     });
   }, [onMessage, user?.id]);
 
@@ -116,9 +143,9 @@ const ChatRoom = () => {
     setInput("");
     sendTyping(false);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    setAllRead(false); // new message sent, reset read status
+    setAllRead(false);
 
-    const tempId = Date.now();
+    const tempId = `temp_${Date.now()}`;
     const tempMsg = {
       id: tempId,
       senderId: user?.id,
@@ -130,10 +157,10 @@ const ChatRoom = () => {
       _pending: true,
     };
     setMessages((prev) => [...prev, tempMsg]);
-    socketSend(content);
 
     try {
       const saved = await httpSendMessage(conversationId, { content, messageType: "text" });
+      // Replace temp with confirmed message (socket broadcast may also arrive — dedup handles it)
       setMessages((prev) =>
         prev.map((m) =>
           m.id === tempId
@@ -141,15 +168,22 @@ const ChatRoom = () => {
             : m
         )
       );
-    } catch {
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+    } catch (err: any) {
+      if (err?.response?.status === 451) {
+        const warning = err.response.data?.warning;
+        setMessages((prev) =>
+          prev
+            .filter((m) => m.id !== tempId)
+            .concat(warning ? [{ ...warning, senderId: user?.id, messageType: "system" }] : [])
+        );
+      } else {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      }
     }
   };
 
   const participantName = participant?.name || "Conversation";
   const participantInitial = participantName.charAt(0).toUpperCase();
-
-  // Read receipt icon for the last sent message
   const lastSentIdx = messages.reduce((acc, m, i) => (Number(m.senderId) === user?.id ? i : acc), -1);
 
   return (
@@ -161,7 +195,6 @@ const ChatRoom = () => {
             <ArrowLeft size={20} />
           </Link>
           <div className="flex items-center gap-3">
-            {/* Avatar with online ring */}
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold text-sm overflow-hidden">
                 {participant?.profileImage ? (
@@ -217,6 +250,18 @@ const ChatRoom = () => {
             const isLastInGroup = !next || Number(next.senderId) !== Number(msg.senderId);
             const isLastSent = isMe && idx === lastSentIdx;
 
+            // System / bot warning
+            if (msg.messageType === "system") {
+              return (
+                <div key={msg.id} className="flex justify-center px-2 my-2">
+                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-xs py-2 px-4 rounded-xl shadow-sm max-w-sm">
+                    <Bot size={13} className="shrink-0" />
+                    <span>{msg.content}</span>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"} px-2`}>
                 <div className="flex flex-col" style={{ maxWidth: "75%" }}>
@@ -256,7 +301,6 @@ const ChatRoom = () => {
           })
         )}
 
-        {/* Typing indicator bubble */}
         {isParticipantTyping && (
           <div className="flex justify-start px-2">
             <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm flex items-center gap-1">

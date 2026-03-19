@@ -6,16 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getCases } from "@/services/api";
 import { formatTimeAgo } from "@/lib/utils";
+import { useRealtimeEvent } from "@/hooks/use-realtime";
 
 const CasesPage = () => {
   const [casesData, setCasesData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
+  const fetchCases = () => {
     getCases()
       .then((res) => setCasesData(res))
       .finally(() => setIsLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { fetchCases(); }, []);
+  useRealtimeEvent("request_updated", fetchCases);
 
   const cases = casesData?.cases || [];
 

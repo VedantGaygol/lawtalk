@@ -10,6 +10,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middlewares/auth";
 import { AdminApproveLawyerBody } from "../generated/zod/index";
+import { io } from "../app";
 
 const router = Router();
 
@@ -94,6 +95,12 @@ router.put(
       }
 
       res.json({ success: true, message: `Lawyer ${body.status} successfully` });
+
+      // Notify lawyer in real-time
+      if (lawyer) {
+        io.emit(`user_${lawyer.userId}_new_notification`, {});
+        io.emit(`user_${lawyer.userId}_approval_updated`, {});
+      }
     } catch (err) {
       console.error("Admin approve lawyer error:", err);
       res.status(500).json({ error: "Internal server error" });
