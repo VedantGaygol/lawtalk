@@ -1,0 +1,36 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - cd frontend
+      - npm ci
+
+  pre_build:
+    commands:
+      - echo "Running type check and lint..."
+      - npx tsc --noEmit
+      - npx eslint src --max-warnings 0
+
+  build:
+    commands:
+      - echo "Building React app..."
+      # Pull VITE env vars — no secrets, just API URL
+      - echo "VITE_API_URL=http://98.89.244.150" > .env.production
+      - echo "VITE_SOCKET_URL=http://98.89.244.150" >> .env.production
+      - npm run build
+
+  post_build:
+    commands:
+      - echo "Syncing to S3..."
+      - aws s3 sync dist/ s3://lawtalk-frontend/ --delete --cache-control "public,max-age=31536000,immutable"
+      # index.html must NOT be cached long-term
+      - aws s3 cp dist/index.html s3://lawtalk-frontend/index.html --cache-control "no-cache,no-store,must-revalidate"
+      - echo "Invalidating CloudFront..."
+      - aws cloudfront create-invalidation --distribution-id $CF_DISTRIBUTION_ID --paths "/*"
+
+artifacts:
+  files:
+    - frontend/dist/**/*
