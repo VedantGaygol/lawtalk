@@ -18,8 +18,8 @@ phases:
   build:
     commands:
       - echo "Building React app..."
-      - echo "VITE_API_URL=http://lawtalk-alb-123456789.ap-south-1.elb.amazonaws.com" > .env.production
-      - echo "VITE_SOCKET_URL=http://lawtalk-alb-123456789.ap-south-1.elb.amazonaws.com" >> .env.production
+      - echo "VITE_API_URL=http://98.89.244.150" > .env.production
+      - echo "VITE_SOCKET_URL=http://98.89.244.150" >> .env.production
       - npm run build
 
   post_build:
