@@ -1,37 +1,42 @@
 version: 0.2
 
 phases:
-  install:
-    runtime-versions:
-      nodejs: 20
-    commands:
-      - echo "Installing dependencies..."
-      - npm ci
+install:
+runtime-versions:
+nodejs: 20
+commands:
+- echo "Installing dependencies..."
+- npm install
 
-  build:
-    commands:
-      - echo "Building React app..."
+build:
+commands:
+- echo "Setting environment variables..."
+- echo "VITE_API_URL=http://98.89.244.150" > .env.production
+- echo "VITE_SOCKET_URL=http://98.89.244.150" >> .env.production
 
-      - echo "VITE_API_URL=http://98.89.244.150" > .env.production
-      - echo "VITE_SOCKET_URL=http://98.89.244.150" >> .env.production
+```
+  - echo "Building React app..."
+  - export NODE_OPTIONS=--max_old_space_size=4096
+  - npm run build
+```
 
-      - export NODE_OPTIONS=--max_old_space_size=4096
+post_build:
+commands:
+- echo "Checking build output..."
+- ls -la dist
 
-      - npm run build
+```
+  - echo "Uploading to S3..."
+  - aws s3 sync dist/ s3://lawtalk-frontend/ --delete --cache-control "public,max-age=31536000,immutable"
 
-  post_build:
-    commands:
-      - echo "Checking dist folder..."
-      - ls -la dist
+  - echo "Updating index.html cache..."
+  - aws s3 cp dist/index.html s3://lawtalk-frontend/index.html --cache-control "no-cache,no-store,must-revalidate"
 
-      - echo "Deploying to S3..."
-      - aws s3 sync dist/ s3://lawtalk-frontend/ --delete --cache-control "public,max-age=31536000,immutable"
-
-      - aws s3 cp dist/index.html s3://lawtalk-frontend/index.html --cache-control "no-cache,no-store,must-revalidate"
-
-      - aws cloudfront create-invalidation --distribution-id $CF_DISTRIBUTION_ID --paths "/*"
+  - echo "Invalidating CloudFront cache..."
+  - aws cloudfront create-invalidation --distribution-id $CF_DISTRIBUTION_ID --paths "/*"
+```
 
 artifacts:
-  base-directory: dist
-  files:
-    - '**/*'
+base-directory: dist
+files:
+- '**/*'
