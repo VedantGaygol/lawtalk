@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   CheckCircle2, XCircle, ChevronDown, ChevronUp,
-  MapPin, DollarSign, Clock, User, FileText, MessageSquare
+  MapPin, IndianRupee, Clock, User, FileText, MessageSquare
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -135,7 +135,7 @@ const LawyerRequests = () => {
                           <span className="flex items-center gap-1.5"><MapPin size={15} /> {req.case.location}</span>
                         )}
                         {req.case?.budget && (
-                          <span className="flex items-center gap-1.5"><DollarSign size={15} /> Budget: {formatCurrency(req.case.budget)}</span>
+                          <span className="flex items-center gap-1.5"><IndianRupee size={15} /> Budget: {formatCurrency(req.case.budget)}</span>
                         )}
                         <span className="flex items-center gap-1.5"><Clock size={15} /> Submitted {formatTimeAgo(req.case?.createdAt)}</span>
                       </div>

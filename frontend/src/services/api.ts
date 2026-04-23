@@ -40,6 +40,9 @@ export const getCaseById = (id: number) =>
 export const getCaseAnalysis = (id: number) =>
   api.get(`/api/cases/${id}/analysis`).then((r) => r.data);
 
+export const getCaseRecommendations = (id: number) =>
+  api.get(`/api/cases/${id}/recommendations`).then((r) => r.data);
+
 export const createCase = (data: Record<string, any>) =>
   api.post("/api/cases", data).then((r) => r.data);
 
@@ -99,6 +102,18 @@ export const getNotifications = () =>
 
 export const markNotificationRead = (id: number) =>
   api.put(`/api/notifications/${id}/read`).then((r) => r.data);
+
+export const getSolvePending = (caseId: number) =>
+  api.get(`/api/cases/${caseId}/solve-pending`).then((r) => r.data);
+
+export const markCaseSolved = (caseId: number) =>
+  api.put(`/api/cases/${caseId}/mark-solved`).then((r) => r.data);
+
+export const confirmCaseSolved = (caseId: number, confirmed: boolean) =>
+  api.put(`/api/cases/${caseId}/confirm-solved`, { confirmed }).then((r) => r.data);
+
+export const createReview = (data: { lawyerId: number; caseId: number; rating: number; comment?: string }) =>
+  api.post("/api/reviews", data).then((r) => r.data);
 
 // Admin
 export const adminGetLawyers = () =>

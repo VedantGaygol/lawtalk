@@ -31,6 +31,7 @@ import ChatRoomPage from "@/pages/chat/room";
 import LawyerDashboard from "@/pages/lawyer/dashboard";
 import LawyerProfile from "@/pages/lawyer/profile";
 import LawyerRequests from "@/pages/lawyer/requests";
+import LawyerCases from "@/pages/lawyer/cases";
 
 // Admin pages
 import AdminDashboard from "@/pages/admin/index";
@@ -124,6 +125,9 @@ function Router() {
       {/* Lawyer */}
       <Route path="/lawyer/dashboard">
         <ProtectedLayout><LawyerDashboard /></ProtectedLayout>
+      </Route>
+      <Route path="/lawyer/cases">
+        <ProtectedLayout><LawyerCases /></ProtectedLayout>
       </Route>
       <Route path="/lawyer/requests">
         <ProtectedLayout><LawyerRequests /></ProtectedLayout>

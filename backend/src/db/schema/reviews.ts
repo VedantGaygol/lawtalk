@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
 import { lawyersTable } from "./lawyers";
+import { casesTable } from "./cases";
 
 export const reviewsTable = pgTable("reviews", {
   id: serial("id").primaryKey(),
@@ -12,6 +13,8 @@ export const reviewsTable = pgTable("reviews", {
   userId: integer("user_id")
     .notNull()
     .references(() => usersTable.id),
+  caseId: integer("case_id")
+    .references(() => casesTable.id),
   rating: integer("rating").notNull(),
   comment: text("comment"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

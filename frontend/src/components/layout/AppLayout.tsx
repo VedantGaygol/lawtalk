@@ -45,6 +45,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   } else if (user?.role === 'lawyer') {
     navItems = [
       { label: 'Dashboard', href: '/lawyer/dashboard', icon: Home },
+      { label: 'My Cases', href: '/lawyer/cases', icon: Briefcase },
       { label: 'Requests', href: '/lawyer/requests', icon: FileText },
       { label: 'Messages', href: '/chat', icon: MessageSquare },
       { label: 'Profile', href: '/lawyer/profile', icon: User },
@@ -235,8 +236,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       })()}
 
       {/* Mobile Bottom Nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around items-center h-16 px-2 z-50">
-        {[...navItems.slice(0, 4), { label: 'Alerts', href: '/notifications', icon: Bell }].map((item) => {
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around items-center h-16 px-1 z-50">
+        {[...navItems, { label: 'Alerts', href: '/notifications', icon: Bell }].map((item) => {
           const active = isActive(item.href);
           const isBell = item.href === '/notifications';
           return (
@@ -244,17 +245,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex flex-col items-center justify-center flex-1 h-full space-y-1 transition-colors relative",
+                "flex flex-col items-center justify-center flex-1 h-full space-y-0.5 transition-colors relative",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground"
               )}
             >
               <div className={cn("p-1 rounded-xl transition-all duration-300 relative", active ? "bg-primary/10" : "")}>
-                <item.icon size={22} />
+                <item.icon size={20} />
                 {isBell && unreadCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-destructive rounded-full border border-card" />
                 )}
               </div>
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <span className="text-[9px] font-medium leading-none">{item.label}</span>
             </Link>
           );
         })}

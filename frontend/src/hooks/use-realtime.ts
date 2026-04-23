@@ -57,6 +57,7 @@ export function useRealtimeEvent(event: string, callback: () => void) {
   useEffect(() => {
     if (!user) return;
     const fullEvent = `user_${user.id}_${event}`;
-    return subscribe(fullEvent, callback);
+    const unsub = subscribe(fullEvent, callback);
+    return () => { unsub(); };
   }, [user?.id, event, callback]);
 }

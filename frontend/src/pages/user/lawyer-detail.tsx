@@ -186,7 +186,7 @@ const LawyerDetail = () => {
                   <h4 className="font-bold text-lg mb-2">Details</h4>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-muted-foreground text-sm flex items-center gap-2"><Award size={16}/> Hourly Rate</span>
-                    <span className="font-bold">${lawyer.pricing || '150'}/hr</span>
+                    <span className="font-bold">₹{lawyer.pricing || '150'}/hr</span>
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-muted-foreground text-sm flex items-center gap-2"><Clock size={16}/> Response Time</span>

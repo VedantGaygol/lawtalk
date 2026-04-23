@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { db } from "../db/index";
-import { casesTable, lawyersTable } from "../db/schema/index";
-import { eq, and, or } from "drizzle-orm";
+import { casesTable, lawyersTable, notificationsTable, usersTable } from "../db/schema/index";
+import { eq, and, desc } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middlewares/auth";
 import { CreateCaseBody } from "../generated/zod/index";
+import { io } from "../app";
 
 const router = Router();
 
@@ -136,6 +137,38 @@ router.get("/:caseId/lawyer", requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/cases/:caseId/recommendations - AI lawyer recommendations via Python service
+router.get("/:caseId/recommendations", requireAuth, async (req, res) => {
+  try {
+    const caseId = parseInt(req.params.caseId as string);
+    const [caseItem] = await db.select().from(casesTable).where(eq(casesTable.id, caseId)).limit(1);
+    if (!caseItem) { res.status(404).json({ error: "Case not found" }); return; }
+
+    const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:5001";
+    const response = await fetch(`${aiUrl}/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category: caseItem.category,
+        location: caseItem.location || "",
+        budget: caseItem.budget || 0,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json() as { error?: string };
+      res.status(502).json({ error: err.error || "AI service error" });
+      return;
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error("Recommendations error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /api/cases/:caseId/analysis - Dummy AI analysis
 router.get("/:caseId/analysis", requireAuth, async (req, res) => {
   try {
@@ -209,6 +242,138 @@ router.get("/:caseId/analysis", requireAuth, async (req, res) => {
     res.json({ caseId, ...analysis });
   } catch (err) {
     console.error("Case analysis error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/cases/:caseId/solve-pending — check if lawyer sent a solve confirmation to user
+router.get("/:caseId/solve-pending", requireAuth, requireRole("user"), async (req, res) => {
+  try {
+    const caseId = parseInt(req.params.caseId as string);
+    const userId = req.user!.userId;
+
+    // Find the most recent unread "Case Solved" notification for this user+case
+    const [notification] = await db
+      .select()
+      .from(notificationsTable)
+      .where(
+        and(
+          eq(notificationsTable.userId, userId),
+          eq(notificationsTable.relatedId, caseId),
+          eq(notificationsTable.type, "case_update"),
+          eq(notificationsTable.isRead, false)
+        )
+      )
+      .orderBy(desc(notificationsTable.createdAt))
+      .limit(1);
+
+    const pending = !!notification && notification.title.includes("Case Solved");
+    res.json({ pending, notificationId: pending ? notification!.id : null });
+  } catch (err) {
+    console.error("Solve pending check error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /api/cases/:caseId/mark-solved — lawyer marks case as solved, notifies user
+router.put("/:caseId/mark-solved", requireAuth, requireRole("lawyer"), async (req, res) => {
+  try {
+    const caseId = parseInt(req.params.caseId as string);
+    const userId = req.user!.userId;
+
+    const [lawyer] = await db.select().from(lawyersTable).where(eq(lawyersTable.userId, userId)).limit(1);
+    if (!lawyer) { res.status(404).json({ error: "Lawyer not found" }); return; }
+
+    const [caseItem] = await db.select().from(casesTable)
+      .where(and(eq(casesTable.id, caseId), eq(casesTable.assignedLawyerId, lawyer.id)))
+      .limit(1);
+    if (!caseItem) { res.status(404).json({ error: "Case not found or not assigned to you" }); return; }
+
+    if (caseItem.status !== "in_progress") {
+      res.status(400).json({ error: "Case must be in progress to mark as solved" }); return;
+    }
+
+    // Notify the user with a solve-confirmation notification (relatedId = caseId)
+    await db.insert(notificationsTable).values({
+      userId: caseItem.userId,
+      title: "Case Solved — Please Confirm",
+      message: `Your lawyer has marked the case "${caseItem.title}" as solved. Please confirm if the issue is resolved.`,
+      type: "case_update",
+      relatedId: caseId,
+    });
+
+    io.emit(`user_${caseItem.userId}_new_notification`, {});
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Mark solved error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /api/cases/:caseId/confirm-solved — user confirms yes/no
+router.put("/:caseId/confirm-solved", requireAuth, requireRole("user"), async (req, res) => {
+  try {
+    const caseId = parseInt(req.params.caseId as string);
+    const userId = req.user!.userId;
+    const { confirmed } = req.body as { confirmed: boolean };
+
+    const [caseItem] = await db.select().from(casesTable)
+      .where(and(eq(casesTable.id, caseId), eq(casesTable.userId, userId)))
+      .limit(1);
+    if (!caseItem) { res.status(404).json({ error: "Case not found" }); return; }
+    if (!caseItem.assignedLawyerId) { res.status(400).json({ error: "No lawyer assigned" }); return; }
+
+    // Mark the solve-confirmation notification as read so banner disappears
+    await db.update(notificationsTable)
+      .set({ isRead: true })
+      .where(
+        and(
+          eq(notificationsTable.userId, userId),
+          eq(notificationsTable.relatedId, caseId),
+          eq(notificationsTable.type, "case_update"),
+          eq(notificationsTable.isRead, false)
+        )
+      );
+
+    if (confirmed) {
+      await db.update(casesTable)
+        .set({ status: "resolved", updatedAt: new Date() })
+        .where(eq(casesTable.id, caseId));
+
+      // Notify lawyer
+      const [lawyer] = await db.select().from(lawyersTable).where(eq(lawyersTable.id, caseItem.assignedLawyerId)).limit(1);
+      if (lawyer) {
+        await db.insert(notificationsTable).values({
+          userId: lawyer.userId,
+          title: "Case Resolved ✅",
+          message: `The client has confirmed that the case "${caseItem.title}" is resolved.`,
+          type: "case_update",
+          relatedId: caseId,
+        });
+        io.emit(`user_${lawyer.userId}_new_notification`, {});
+      }
+      res.json({ status: "resolved" });
+    } else {
+      // User says not solved — keep in_progress, notify lawyer
+      await db.update(casesTable)
+        .set({ status: "in_progress", updatedAt: new Date() })
+        .where(eq(casesTable.id, caseId));
+
+      const [lawyer] = await db.select().from(lawyersTable).where(eq(lawyersTable.id, caseItem.assignedLawyerId)).limit(1);
+      if (lawyer) {
+        await db.insert(notificationsTable).values({
+          userId: lawyer.userId,
+          title: "Case Reopened ⚠️",
+          message: `The client has indicated that the case "${caseItem.title}" is NOT yet resolved. Please continue working on it.`,
+          type: "case_update",
+          relatedId: caseId,
+        });
+        io.emit(`user_${lawyer.userId}_new_notification`, {});
+      }
+      res.json({ status: "in_progress" });
+    }
+  } catch (err) {
+    console.error("Confirm solved error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
