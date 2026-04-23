@@ -9,25 +9,28 @@ phases:
       - cd frontend
       - npm ci
 
-  pre_build:
-    commands:
-      - echo "Running type check..."
-      - npx tsc --noEmit
-
-      # TEMP: skip eslint to avoid failure
-      # - npx eslint src --max-warnings 0
-
   build:
     commands:
       - echo "Building React app..."
+      - cd frontend
+
       - echo "VITE_API_URL=http://98.89.244.150" > .env.production
       - echo "VITE_SOCKET_URL=http://98.89.244.150" >> .env.production
+
+      # Increase memory for Vite build (IMPORTANT)
+      - export NODE_OPTIONS=--max_old_space_size=4096
+
       - npm run build
 
   post_build:
     commands:
       - echo "Deploying to S3..."
+      - cd frontend
+
+      - ls -la dist  # DEBUG (check dist exists)
+
       - aws s3 sync dist/ s3://lawtalk-frontend/ --delete --cache-control "public,max-age=31536000,immutable"
+
       - aws s3 cp dist/index.html s3://lawtalk-frontend/index.html --cache-control "no-cache,no-store,must-revalidate"
 
       - echo "Invalidating CloudFront..."
