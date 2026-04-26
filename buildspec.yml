@@ -1,25 +1,35 @@
 version: 0.2
 
 phases:
-install:
-runtime-versions:
-nodejs: 20
-commands:
-- echo Installing dependencies
-- cd frontend
-- npm install
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Installing backend dependencies"
+      - cd backend && npm ci && cd ..
+      - echo "Installing frontend dependencies"
+      - cd frontend && npm ci && cd ..
 
-build:
-commands:
-- echo Building frontend
-- cd frontend
-- npm run build
+  build:
+    commands:
+      - echo "Building backend (TypeScript -> dist/)"
+      - cd backend && npm run build && cd ..
+      - echo "Building frontend (Vite -> dist/)"
+      - cd frontend && npm run build && cd ..
 
-post_build:
-commands:
-- echo Deploying to S3
-- aws s3 sync frontend/dist/ s3://lawtalk-frontend/ --delete
+  post_build:
+    commands:
+      - echo "Build completed successfully"
 
 artifacts:
-files:
-- '**/*'
+  files:
+    # Backend compiled output
+    - backend/dist/**/*
+    - backend/package.json
+    - backend/package-lock.json
+    # Frontend static build
+    - frontend/dist/**/*
+    # Deployment scripts and config
+    - appspec.yml
+    - scripts/**/*
+  discard-paths: no
