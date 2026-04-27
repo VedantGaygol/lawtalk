@@ -3,28 +3,25 @@ version: 0.2
 phases:
   install:
     commands:
-      - echo "Installing Node.js 20 on Amazon Linux"
+      - echo "Installing Node.js 20 using nvm"
 
-      # Install Node 20 using nvm (works everywhere)
       - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+
       - export NVM_DIR="$HOME/.nvm"
-      - [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+      - . "$NVM_DIR/nvm.sh"
 
       - nvm install 20
       - nvm use 20
 
-      # Verify
       - node -v
       - npm -v
 
-      # Backend install
       - echo "Installing backend dependencies"
       - cd backend
       - rm -rf node_modules package-lock.json
       - npm install
       - cd ..
 
-      # Frontend install
       - echo "Installing frontend dependencies"
       - cd frontend
       - rm -rf node_modules package-lock.json
