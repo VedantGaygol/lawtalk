@@ -2,14 +2,12 @@ version: 0.0
 os: linux
 
 files:
-  # Deploy backend compiled files
   - source: backend/dist
     destination: /home/ec2-user/lawtalk/backend/dist
   - source: backend/package.json
     destination: /home/ec2-user/lawtalk/backend
   - source: backend/package-lock.json
     destination: /home/ec2-user/lawtalk/backend
-  # Deploy frontend static files to nginx web root
   - source: frontend/dist
     destination: /usr/share/nginx/html
 
@@ -28,6 +26,11 @@ permissions:
       - file
 
 hooks:
+  ApplicationStop:
+    - location: scripts/stop_server.sh
+      timeout: 60
+      runas: root
+
   BeforeInstall:
     - location: scripts/before_install.sh
       timeout: 120
@@ -40,10 +43,5 @@ hooks:
 
   ApplicationStart:
     - location: scripts/start_server.sh
-      timeout: 60
-      runas: root
-
-  ApplicationStop:
-    - location: scripts/stop_server.sh
       timeout: 60
       runas: root

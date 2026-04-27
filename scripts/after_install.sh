@@ -54,7 +54,7 @@ WorkingDirectory=/home/ec2-user/lawtalk/backend
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
 RestartSec=5
-EnvironmentFile=/home/ec2-user/lawtalk/.env
+EnvironmentFile=-/home/ec2-user/lawtalk/.env
 
 [Install]
 WantedBy=multi-user.target
