@@ -3,23 +3,28 @@ version: 0.2
 phases:
   install:
     commands:
-      - echo "Installing Node.js 20 manually"
+      - echo "Installing Node.js 20 on Amazon Linux"
 
-      # Install Node 20 (force fix)
-      - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-      - apt-get install -y nodejs
+      # Install Node 20 using nvm (works everywhere)
+      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      - export NVM_DIR="$HOME/.nvm"
+      - [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-      # Verify version
+      - nvm install 20
+      - nvm use 20
+
+      # Verify
       - node -v
       - npm -v
 
-      # Clean install (important for tailwind + vite bug)
+      # Backend install
       - echo "Installing backend dependencies"
       - cd backend
       - rm -rf node_modules package-lock.json
       - npm install
       - cd ..
 
+      # Frontend install
       - echo "Installing frontend dependencies"
       - cd frontend
       - rm -rf node_modules package-lock.json
