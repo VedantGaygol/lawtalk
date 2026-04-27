@@ -5,28 +5,20 @@ phases:
     commands:
       - echo "Installing Node.js 20 using nvm"
 
-      - curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-
-      - export NVM_DIR="$HOME/.nvm"
-      - . "$NVM_DIR/nvm.sh"
-
-      - nvm install 20
-      - nvm use 20
-
-      - node -v
-      - npm -v
+      - |
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+        export NVM_DIR="$HOME/.nvm"
+        . "$NVM_DIR/nvm.sh"
+        nvm install 20
+        nvm use 20
+        node -v
+        npm -v
 
       - echo "Installing backend dependencies"
-      - cd backend
-      - rm -rf node_modules package-lock.json
-      - npm install
-      - cd ..
+      - cd backend && rm -rf node_modules package-lock.json && npm install && cd ..
 
       - echo "Installing frontend dependencies"
-      - cd frontend
-      - rm -rf node_modules package-lock.json
-      - npm install
-      - cd ..
+      - cd frontend && rm -rf node_modules package-lock.json && npm install && cd ..
 
   build:
     commands:
