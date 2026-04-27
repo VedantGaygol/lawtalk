@@ -2,9 +2,11 @@ version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      nodejs: 20
     commands:
+      - echo "Installing Node.js 20"
+      - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+      - yum install -y nodejs
+      - node -v
       - echo "Installing backend dependencies"
       - cd backend && npm ci && cd ..
       - echo "Installing frontend dependencies"
@@ -23,13 +25,10 @@ phases:
 
 artifacts:
   files:
-    # Backend compiled output
     - backend/dist/**/*
     - backend/package.json
     - backend/package-lock.json
-    # Frontend static build
     - frontend/dist/**/*
-    # Deployment scripts and config
     - appspec.yml
     - scripts/**/*
   discard-paths: no
