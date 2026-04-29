@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  LawTalk – Backend Stack
+  ALB, EC2 Auto Scaling Group, Launch Template, IAM instance profile,
+  security groups, CodeDeploy application + deployment group.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: lawtalk
+  InstanceType:
+    Type: String
+    Default: t3.small
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH access (optional but recommended)
+  # Assumption: Amazon Linux 2023 AMI in us-east-1 – update per region
+  AMIID:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  ALBCertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM certificate ARN for ALB HTTPS listener. Leave blank to skip HTTPS listener.
+  DesiredCapacity:
+    Type: Number
+    Default: 1
+  MinSize:
+    Type: Number
+    Default: 1
+  MaxSize:
+    Type: Number
+    Default: 3
+
+Conditions:
+  HasCertCondition: !Not [!Equals [!Ref ALBCertificateArn, ""]]
+
+Resources:
+
+  # ── Security Groups ───────────────────────────────────────────────────────
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Internet-facing ALB - allow 80 and 443
+      VpcId: !ImportValue
+        Fn::Sub: "${EnvironmentName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-alb-sg"
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 backend - allow ALB on 5000, SSM, outbound
+      VpcId: !ImportValue
+        Fn::Sub: "${EnvironmentName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-backend-sg"
+
+  # ── IAM Role for EC2 ──────────────────────────────────────────────────────
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-ec2-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: LawTalkEC2Policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Read DB + JWT secrets
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}/*"
+              # S3 uploads bucket
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${EnvironmentName}-uploads-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::${EnvironmentName}-uploads-${AWS::AccountId}/*"
+              # SQS
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${EnvironmentName}-*"
+              # CodeDeploy agent needs S3 artifact access
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: "arn:aws:s3:::codepipeline-*/*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${EnvironmentName}-ec2-profile"
+      Roles:
+        - !Ref EC2Role
+
+  # ── Secrets: JWT secret ───────────────────────────────────────────────────
+  JWTSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/jwt/secret"
+      Description: JWT signing secret for LawTalk backend
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: "jwt_secret"
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\\'
+
+  # ── Application Load Balancer ─────────────────────────────────────────────
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${EnvironmentName}-alb"
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !ImportValue
+          Fn::Sub: "${EnvironmentName}-PublicSubnet1"
+        - !ImportValue
+          Fn::Sub: "${EnvironmentName}-PublicSubnet2"
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${EnvironmentName}-backend-tg"
+      Port: 5000
+      Protocol: HTTP
+      VpcId: !ImportValue
+        Fn::Sub: "${EnvironmentName}-VpcId"
+      TargetType: instance
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      # Socket.IO requires sticky sessions
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: "true"
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: "86400"
+
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: !If [HasCertCondition, redirect, forward]
+          RedirectConfig: !If
+            - HasCertCondition
+            - Protocol: HTTPS
+              Port: "443"
+              StatusCode: HTTP_301
+            - !Ref AWS::NoValue
+          TargetGroupArn: !If
+            - HasCertCondition
+            - !Ref AWS::NoValue
+            - !Ref BackendTargetGroup
+
+  ALBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertCondition
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref ALBCertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+
+  # ── Launch Template ───────────────────────────────────────────────────────
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${EnvironmentName}-lt"
+      LaunchTemplateData:
+        ImageId: !Ref AMIID
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            # Install Node.js 20
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+            yum install -y nodejs git ruby wget
+
+            # Install CodeDeploy agent
+            cd /tmp
+            wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+            chmod +x ./install
+            ./install auto
+            systemctl enable codedeploy-agent
+            systemctl start codedeploy-agent
+
+            # Install CloudWatch agent
+            yum install -y amazon-cloudwatch-agent
+
+            # Create app directory
+            mkdir -p /home/ec2-user/lawtalk/backend
+            chown -R ec2-user:ec2-user /home/ec2-user/lawtalk
+
+            # Write .env from Secrets Manager at boot
+            # Assumption: DATABASE_URL is assembled from RDS secret fields
+            DB_SECRET=$(aws secretsmanager get-secret-value \
+              --secret-id ${EnvironmentName}/rds/credentials \
+              --region ${AWS::Region} \
+              --query SecretString --output text)
+            DB_USER=$(echo $DB_SECRET | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['username'])")
+            DB_PASS=$(echo $DB_SECRET | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['password'])")
+            DB_HOST=$(echo $DB_SECRET | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('host','${EnvironmentName}-postgres.${AWS::Region}.rds.amazonaws.com'))")
+            DB_NAME=${EnvironmentName}
+
+            JWT_VAL=$(aws secretsmanager get-secret-value \
+              --secret-id ${EnvironmentName}/jwt/secret \
+              --region ${AWS::Region} \
+              --query SecretString --output text | python3 -c "import sys,json; print(json.load(sys.stdin)['jwt_secret'])")
+
+            cat > /home/ec2-user/lawtalk/.env <<EOF
+            DATABASE_URL=postgresql://$DB_USER:$DB_PASS@$DB_HOST:5432/$DB_NAME
+            PORT=5000
+            JWT_SECRET=$JWT_VAL
+            NODE_ENV=production
+            EOF
+            chown ec2-user:ec2-user /home/ec2-user/lawtalk/.env
+            chmod 600 /home/ec2-user/lawtalk/.env
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${EnvironmentName}-backend"
+
+  # ── Auto Scaling Group ────────────────────────────────────────────────────
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${EnvironmentName}-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      VPCZoneIdentifier:
+        - !ImportValue
+          Fn::Sub: "${EnvironmentName}-PublicSubnet1"
+        - !ImportValue
+          Fn::Sub: "${EnvironmentName}-PublicSubnet2"
+      TargetGroupARNs:
+        - !Ref BackendTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 120
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-backend"
+          PropagateAtLaunch: true
+
+  # ── CodeDeploy ────────────────────────────────────────────────────────────
+  CodeDeployApp:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub "${EnvironmentName}-app"
+      ComputePlatform: Server
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-codedeploy-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApp
+      DeploymentGroupName: !Sub "${EnvironmentName}-dg"
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+
+Outputs:
+  ALBDnsName:
+    Value: !GetAtt ALB.DNSName
+    Export:
+      Name: !Sub "${EnvironmentName}-ALBDnsName"
+  ALBHostedZoneId:
+    Value: !GetAtt ALB.CanonicalHostedZoneID
+    Export:
+      Name: !Sub "${EnvironmentName}-ALBHostedZoneId"
+  BackendSG:
+    Value: !Ref BackendSecurityGroup
+    Export:
+      Name: !Sub "${EnvironmentName}-BackendSG"
+  CodeDeployAppName:
+    Value: !Ref CodeDeployApp
+    Export:
+      Name: !Sub "${EnvironmentName}-CodeDeployApp"
+  CodeDeployDGName:
+    Value: !Ref CodeDeployDeploymentGroup
+    Export:
+      Name: !Sub "${EnvironmentName}-CodeDeployDG"
+  JWTSecretArn:
+    Value: !Ref JWTSecret
+    Export:
+      Name: !Sub "${EnvironmentName}-JWTSecretArn"

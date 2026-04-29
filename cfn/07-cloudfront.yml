@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  LawTalk – CloudFront Distribution for Backend API
+  Provides HTTPS endpoint for the backend ALB without requiring custom domain or certificate validation.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: lawtalk
+
+Resources:
+  # CloudFront Distribution for Backend API
+  BackendCloudFront:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${EnvironmentName} Backend API HTTPS"
+        Origins:
+          - Id: ALBOrigin
+            DomainName: !ImportValue
+              Fn::Sub: "${EnvironmentName}-ALBDnsName"
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: ALBOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          ForwardedValues:
+            QueryString: true
+            Headers:
+              - Authorization
+              - Accept
+              - Content-Type
+              - Origin
+              - Referer
+            Cookies:
+              Forward: all
+          MinTTL: 0
+          DefaultTTL: 0
+          MaxTTL: 0
+          Compress: true
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  CloudFrontDomain:
+    Description: CloudFront HTTPS domain for backend API
+    Value: !GetAtt BackendCloudFront.DomainName
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudFrontDomain"
+  CloudFrontURL:
+    Description: Full HTTPS URL for backend API
+    Value: !Sub "https://${BackendCloudFront.DomainName}"
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudFrontURL"

@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  LawTalk – Frontend Stack (AWS Amplify Hosting)
+  Amplify app connected to GitHub, auto-builds and deploys the React/Vite
+  frontend on every push to main. Custom domain via Route 53.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: lawtalk
+  GitHubConnectionArn:
+    Type: String
+    Description: CodeStar/CodeConnections ARN for GitHub (same one used by CodePipeline)
+  GitHubRepo:
+    Type: String
+    Default: VedantGaygol/lawtalk
+    Description: owner/repo format
+  GitHubBranch:
+    Type: String
+    Default: main
+  GitHubOAuthToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub Personal Access Token with repo scope
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Root domain e.g. lawtalk.in. Leave blank to skip custom domain.
+  FrontendSubdomain:
+    Type: String
+    Default: www
+  ViteApiUrl:
+    Type: String
+    Description: Full URL of the backend ALB, e.g. http://alb-dns.us-east-1.elb.amazonaws.com
+
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+
+Resources:
+
+  # ── IAM role Amplify uses to pull source and deploy ───────────────────────
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-amplify-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: amplify.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess-Amplify
+      Policies:
+        - PolicyName: AmplifyCodeConnectionsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codeconnections:UseConnection
+                  - codeconnections:GetConnection
+                Resource: !Ref GitHubConnectionArn
+
+  # ── Amplify App ───────────────────────────────────────────────────────────
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub "${EnvironmentName}-frontend"
+      Repository: !Sub "https://github.com/${GitHubRepo}"
+      OauthToken: !Ref GitHubOAuthToken
+      IAMServiceRole: !GetAtt AmplifyServiceRole.Arn
+      Platform: WEB
+      # Build settings – mirrors the existing Vite build
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - cd frontend
+                - npm ci
+            build:
+              commands:
+                - cd frontend
+                - npx vite build
+          artifacts:
+            baseDirectory: frontend/dist
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - frontend/node_modules/**/*
+      EnvironmentVariables:
+        - Name: VITE_API_URL
+          Value: !Ref ViteApiUrl
+        - Name: NODE_ENV
+          Value: production
+      # SPA rewrite – all paths → index.html
+      CustomRules:
+        - Source: "</^[^.]+$|\\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json)$)([^.]+$)/>"
+          Target: /index.html
+          Status: "200"
+        - Source: "/<*>"
+          Target: /index.html
+          Status: "404-200"
+
+  # ── Amplify Branch (main) ─────────────────────────────────────────────────
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !Ref GitHubBranch
+      EnableAutoBuild: true
+      Stage: PRODUCTION
+      EnvironmentVariables:
+        - Name: VITE_API_URL
+          Value: !Ref ViteApiUrl
+
+  # ── Custom Domain (only when DomainName is provided) ─────────────────────
+  AmplifyDomain:
+    Type: AWS::Amplify::Domain
+    Condition: HasDomain
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      DomainName: !Ref DomainName
+      SubDomainSettings:
+        - Prefix: !Ref FrontendSubdomain
+          BranchName: !Ref GitHubBranch
+        - Prefix: ""
+          BranchName: !Ref GitHubBranch
+      EnableAutoSubDomain: false
+
+Outputs:
+  AmplifyAppId:
+    Value: !GetAtt AmplifyApp.AppId
+    Export:
+      Name: !Sub "${EnvironmentName}-AmplifyAppId"
+  AmplifyDefaultDomain:
+    Value: !Sub "${GitHubBranch}.${AmplifyApp.AppId}.amplifyapp.com"
+    Export:
+      Name: !Sub "${EnvironmentName}-AmplifyDefaultDomain"
+  FrontendURL:
+    Value: !If
+      - HasDomain
+      - !Sub "https://${FrontendSubdomain}.${DomainName}"
+      - !Sub "https://${GitHubBranch}.${AmplifyApp.AppId}.amplifyapp.com"

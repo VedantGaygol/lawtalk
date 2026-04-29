@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  LawTalk – Notifications & Uploads Stack
+  S3 uploads bucket, SQS queue, Lambda email worker, SES config,
+  Cloudinary secret, lifecycle policies.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: lawtalk
+  SESFromEmail:
+    Type: String
+    Description: Verified SES sender address, e.g. noreply@lawtalk.in
+  CloudinaryCloudName:
+    Type: String
+    Description: Cloudinary cloud name (stored in Secrets Manager)
+  CloudinaryApiKey:
+    Type: String
+    NoEcho: true
+  CloudinaryApiSecret:
+    Type: String
+    NoEcho: true
+
+Resources:
+
+  # ── Uploads S3 Bucket ─────────────────────────────────────────────────────
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-uploads-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ["*"]
+            AllowedMethods: [GET, PUT, POST]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteIncompleteMultipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: TransitionOldVersions
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+            NoncurrentVersionExpirationInDays: 90
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-uploads"
+
+  # ── SQS Queue (email / background tasks) ─────────────────────────────────
+  NotificationsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-notifications-dlq"
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  NotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-notifications"
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationsDLQ.Arn
+        maxReceiveCount: 3
+
+  # ── Cloudinary secret ─────────────────────────────────────────────────────
+  CloudinarySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/cloudinary"
+      Description: Cloudinary API credentials for LawTalk
+      SecretString: !Sub |
+        {
+          "cloud_name": "${CloudinaryCloudName}",
+          "api_key": "${CloudinaryApiKey}",
+          "api_secret": "${CloudinaryApiSecret}"
+        }
+
+  # ── Lambda execution role ─────────────────────────────────────────────────
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaNotificationsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt NotificationsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}/*"
+
+  # ── Lambda function (email worker) ───────────────────────────────────────
+  # Assumption: inline stub – replace ZipFile with real deployment package
+  EmailWorkerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-email-worker"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          SES_FROM_EMAIL: !Ref SESFromEmail
+          ENVIRONMENT: !Ref EnvironmentName
+      Code:
+        ZipFile: |
+          // Stub – replace with real email worker package
+          const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
+          const ses = new SESClient({});
+          exports.handler = async (event) => {
+            for (const record of event.Records) {
+              const body = JSON.parse(record.body);
+              console.log("Processing notification:", body);
+              // TODO: send email via SES
+            }
+          };
+
+  # ── SQS → Lambda event source mapping ────────────────────────────────────
+  LambdaSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt NotificationsQueue.Arn
+      FunctionName: !GetAtt EmailWorkerLambda.Arn
+      BatchSize: 10
+      Enabled: true
+
+Outputs:
+  UploadsBucketName:
+    Value: !Ref UploadsBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-UploadsBucket"
+  NotificationsQueueUrl:
+    Value: !Ref NotificationsQueue
+    Export:
+      Name: !Sub "${EnvironmentName}-NotificationsQueueUrl"
+  NotificationsQueueArn:
+    Value: !GetAtt NotificationsQueue.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-NotificationsQueueArn"
+  CloudinarySecretArn:
+    Value: !Ref CloudinarySecret
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudinarySecretArn"
