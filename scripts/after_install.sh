@@ -7,14 +7,17 @@ APP_DIR=/home/ec2-user/lawtalk/backend
 cd $APP_DIR
 npm ci --omit=dev
 
-# Install drizzle-kit temporarily for migrations
-npm install drizzle-kit
+# Install drizzle-kit and tsx temporarily for migrations and seeding
+npm install drizzle-kit tsx
 
 # Run database migrations
 npm run db:push
 
-# Remove drizzle-kit after migration
-npm uninstall drizzle-kit
+# Run database seed
+npm run seed
+
+# Remove temporary packages after setup
+npm uninstall drizzle-kit tsx
 
 # Write nginx config to proxy /api and /socket.io to backend, serve frontend from root
 cat > /etc/nginx/conf.d/lawtalk.conf <<'EOF'
