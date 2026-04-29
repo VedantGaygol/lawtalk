@@ -168,7 +168,7 @@ Resources:
       VpcId: !ImportValue
         Fn::Sub: "${EnvironmentName}-VpcId"
       TargetType: instance
-      HealthCheckPath: /api/health
+      HealthCheckPath: /api/healthz
       HealthCheckIntervalSeconds: 30
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
