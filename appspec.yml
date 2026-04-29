@@ -10,19 +10,11 @@ files:
     destination: /home/ec2-user/lawtalk/backend
   - source: backend/package-lock.json
     destination: /home/ec2-user/lawtalk/backend
-  - source: frontend/dist
-    destination: /usr/share/nginx/html
 
 permissions:
   - object: /home/ec2-user/lawtalk
     owner: ec2-user
     group: ec2-user
-    type:
-      - directory
-      - file
-  - object: /usr/share/nginx/html
-    owner: nginx
-    group: nginx
     type:
       - directory
       - file

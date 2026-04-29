@@ -121,7 +121,9 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:GetObjectVersion
-                Resource: "arn:aws:s3:::codepipeline-*/*"
+                Resource:
+                  - "arn:aws:s3:::codepipeline-*/*"
+                  - !Sub "arn:aws:s3:::${EnvironmentName}-artifacts-${AWS::AccountId}/*"
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
